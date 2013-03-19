@@ -1,3 +1,0 @@
-#SampleID	BarcodeSequence	LinkerPrimerSequence	Habitat	SeqDirection	SampleName	IlluminaFileID	Description
-PreShellfishLab.F04	GCTTG	TCTCAAAGATTAAGCC	Prespill	Forward	PreShellfishLab	1926.KO.10	PreShellfishLab.F04
-PreShellfishLab.R22	GCCTG	CTGCCTTCCTTGGA	Prespill	Reverse	PreShellfishLab	1926.KO.10	PreShellfishLab.R22
