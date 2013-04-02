@@ -197,6 +197,9 @@ foreach my $file (@files) {
 		print $READ_HANDLE_FULL @read2 if exists $output_filehandles_full{ $mapping{$BC1}{$BC2} } ;
 		print $READ_HANDLE_1 @read1    if exists $output_filehandles_1{ $mapping{$BC1}{$BC2} } ;
 		print $READ_HANDLE_2 @read2    if exists $output_filehandles_2{ $mapping{$BC1}{$BC2} } ;
+		
+		
+		
 	}
 }
 ##close files and flush IO buffers
@@ -205,7 +208,7 @@ foreach my $handle ( keys(%output_filehandles_1) ) {
 	#print "HANDLE : $handle\n";
 	#print "PHRED VALUE : $phred_value\n";
 	my $options = "-m $min_overlap -M $max_overlap -p $phred_value -s $fragment_std -r $read_length -x $mismatch_ratio";
-	my $flash_cmd = "flash $output_dir/$out_file_core"."_$handle"."_1.fastq $output_dir/$out_file_core"."_$handle"."_2.fastq $options -d $output_dir -o $out_file_core".".$handle";
+	my $flash_cmd = "flash_250 $output_dir/$out_file_core"."_$handle"."_1.fastq $output_dir/$out_file_core"."_$handle"."_2.fastq $options -d $output_dir -o $out_file_core".".$handle";
 	#print "RUNNING : $flash_cmd\n";
 	system($flash_cmd) unless -z "$output_dir/$out_file_core"."_$handle"."_1.fastq" && -z "$output_dir/$out_file_core"."_$handle"."_2.fastq";
 	
