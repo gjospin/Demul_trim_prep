@@ -290,11 +290,16 @@ sub convert_to_qiime_read {
 	my @read   = @{ $args{read_array} };
 	my $sample = $args{sample};
 	my @return_array;
+	my $read_seq  = $read[1];
+	chomp($read_seq);
+	$read_seq = reverse($read_seq);
+	$read_seq =~ tr/ACGTacgt/TGCAtgca/;
 	$sample_read_count{$sample} = 0 unless exists $sample_read_count{$sample};
 	$sample_read_count{$sample}++;
-	$sample =~ s/_/./g;
+	$sample =~ s/_/./g; #qiime does not like _ in the sample names.
 	$return_array[0] = ">$sample"."_$sample_read_count{$sample}\n";
-	$return_array[1] = $read[1];
+	$return_array[1] = $read_seq."\n";
+	
 	#print "@read\n@return_array";
 
 	return @return_array;
