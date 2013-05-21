@@ -261,7 +261,6 @@ foreach my $file (@files) {
 ##close files and flush IO buffers
 foreach my $handle ( keys(%output_filehandles_1) ) {
 	$output_filehandles_1{$handle}->close();
-	next unless $handle eq "AQ493";
 	next unless -e "$output_dir/raw_fastq/$out_file_core"."_$handle"."_1.fastq" && -e "$output_dir/raw_fastq/$out_file_core"."_$handle"."_2.fastq";
 
 	#print "HANDLE : $handle\n";
