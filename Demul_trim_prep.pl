@@ -109,7 +109,13 @@ while (<INBC>) {
 		my $value = $line[$i];
 		$mapping_file{ $line[0] }{$key} = $value;
 	}
+	unless (exists $mapping_file{ $line[0] }{"BarcodeSequence"} && exists $mapping_file{ $line[0] }{"ReverseBarcode"}){
+	    print STDERR "**** WARNING **** Did not find BarcodeSequence or ReverseBarcode values.\nSkipping $_\n";
+	    next;
+	}
 	$samples{ $line[0] } = 1;
+	#changes spaces to . in sample IDs
+	$line[0] =~ s/\s/\./g;
 	if ( length $mapping_file{ $line[0] }{"BarcodeSequence"} != 8 ) {
 		print STDERR "*** Warning *** Barcode sequence $mapping_file{ $line[0] }{\"BarcodeSequence\"} is not 8 bases long\n";
 	}
