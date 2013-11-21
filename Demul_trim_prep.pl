@@ -259,7 +259,6 @@ foreach my $file (@files) {
 			$bc_count{mismatch}++;
 		}
 	}
-	last;
 }
 ##close files and flush IO buffers
 foreach my $handle ( keys(%output_filehandles_1) ) {
