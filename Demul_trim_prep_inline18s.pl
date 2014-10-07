@@ -32,7 +32,7 @@ use warnings;
 use IO::Zlib;
 use Getopt::Long;
 my ( $full_print, $reverse, $fragment_length, $skip_merge );
-my $read_length       = 300;
+my $read_length       = 250;
 my $quality_threshold = 20;
 my $fragment_std      = 20;
 my $min_overlap       = 10;
@@ -60,7 +60,7 @@ GetOptions(
 			"no-mismatch"       => \$no_mismatch,
 			"skip-interleaved"  => \$skip_interleaved,
     "trim-file=s" => \$adaptor_file,
-    "trim-tool=s" => \$trim_path,
+    "trim-path=s" => \$trim_path,
 );
 my $usage = "Wrong number of arguments\nUsage:\ndemultiplex_dualBC.pl <options> <illumina_directory> <mapping_file> <output_directory> <filename_core>\n";
 die("$usage")                            if @ARGV != 4;
@@ -69,6 +69,53 @@ print STDERR "Indices are switched\n"    if $reverse;
 
 die "$ARGV[1] was not found\n" unless -e $ARGV[1];
 
+#reading the Phasers
+my %phase_f=();
+my %phase_r=();
+my %forward_primers = ();
+my %reverse_primers = ();
+
+open(INPHASE,"18s_dual_phaser.csv");
+<INPHASE>;
+while(<INPHASE>){
+    chomp($_);
+    my @line = split(/;/,$_);
+    next unless $_ =~ /[^;]/;
+    if($line[0] =~ m/Forward/){
+	my $primer = $line[5].$line[6].$line[7];
+	$primer=~ s/"//g;
+	$line[4] =~ s/"//g;
+	$phase_f{$line[4]}=$primer;
+	$forward_primers{$line[6].$line[7]}=1;
+    }elsif($_ =~ m/Reverse/){
+	my $primer = $line[5].$line[6].$line[7];
+	$primer =~ s/"//g;
+	$line[4] =~ s/"//g;
+	$phase_r{$line[4]}=$primer;
+	$reverse_primers{$line[6].$line[7]}=1;
+    }
+}
+close(INPHASE);
+
+# Making list of primers to use trimmomatic with.
+open(OUTTRIM,">primers.fasta");
+foreach my $prim(keys %forward_primers){
+    $prim =~ s/"//g;
+    print OUTTRIM ">forward_primer\n$prim\n";
+    my $revcomp = reverse($prim);
+    $revcomp =~ tr/ACGTacgt/TGCAtgca/;
+    print OUTTRIM ">forward_primer_revcomp\n$revcomp\n";
+}
+foreach my $prim(keys %reverse_primers){
+    $prim =~ s/"//g;
+    print OUTTRIM ">reverse_primer\n$prim\n";
+    my $revcomp = reverse($prim);
+    $revcomp =~ tr/ACGTacgt/TGCAtgca/;
+    print OUTTRIM ">reverse_primer_revcomp\n$revcomp\n";
+}
+
+
+close(OUTTRIM);
 #reading barcodes
 #my %barcode_forward = ();
 my %barcode_rev   = ();
@@ -91,6 +138,7 @@ print STDERR "Creating $output_dir/qiime_ready\n" unless -e $output_dir."/qiime_
 print STDERR "Creating $output_dir/trimmed_fastq\n" unless -e $output_dir."/trimmed_fastq";
 `mkdir -p $output_dir/trimmed_fastq`                unless -e $output_dir."/trimmed_fastq";
 
+
 print STDERR "Reading barcodes and sample mapping\n";
 
 open( INBC, $ARGV[1] );
@@ -107,6 +155,7 @@ my %total_codes             = ();
 my %barcode                 = ();
 my %samples                 = ();
 my $line_count              = 0;
+my %long_phase=();
 while (<INBC>) {
 	chomp($_);
 	next if $_ eq "";
@@ -140,6 +189,7 @@ while (<INBC>) {
 	print STDERR "WARNING: $line[0]\t$code_original was already defined for $barcode{$code_original}\n"
 	  if defined $barcode{$code_original} && $barcode{$code_original} ne $line[0];
 	$barcode{$code_original} = $line[0];
+	push(@{$long_phase{$code_original}},($phase_f{$mapping_file{ $line[0] }{"BarcodeSequence"}},$phase_r{$mapping_file{ $line[0] }{"ReverseBarcode"}}));
 	unless ($no_mismatch) {
 
 		# insert all single-error barcodes
@@ -157,6 +207,7 @@ while (<INBC>) {
 						print STDERR "WARNING: $line[0]\t$long_code was already defined for $barcode{$long_code}\n"
 						  if defined $barcode{$long_code} && $barcode{$long_code} ne $line[0];
 						$barcode{$long_code} = $line[0];
+						push(@{$long_phase{$long_code}}, ($phase_f{$mapping_file{ $line[0] }{"BarcodeSequence"}},$phase_r{$mapping_file{ $line[0] }{"ReverseBarcode"}}));
 					}
 				}
 			}
@@ -170,6 +221,9 @@ print STDERR " using 1 maximum mismatch per barcode" unless $no_mismatch;
 print STDERR "\n";
 close(INBC);
 
+#foreach my $bcph(keys %long_phase){
+#    print "$bcph\t1:$long_phase{$bcph}[0]\t2:$long_phase{$bcph}[1]\n";
+#}
 #foreach my $fw ( keys %mapping ) {
 #	foreach my $rv ( keys %{ $mapping{$fw} } ) {
 #		print "$fw\t$rv\t$mapping{$fw}{$rv}\n";
@@ -188,10 +242,11 @@ foreach my $code ( sort keys %barcode ) {
 }
 
 ## FastQ files are assumed to be gzipped.  .gz filenames
-
+open(OUTMISMATCH,">$output_dir/raw_fastq/$out_file_core.mismatch.fastq");
 my @files    = <$ARGV[0]/*_R1_*.fastq.gz>;
 foreach my $file (@files) {
 	print STDERR "Processing $file\n";
+	next if $file =~ m/Undertermined/;
 	$file =~ m/^(\S+)_\S\S_(\d+).fastq.gz/;
 	my $core  = $1;
 	my $index = $2;
@@ -202,39 +257,35 @@ foreach my $file (@files) {
 	close($TYPETEST);
 	my $read_type = $type->{qtype};
 	open( READ1,  "zcat $file |" );
-	open( READ2,  "zcat $core"."_R4_$index.fastq.gz |" );
-	open( INDEX1, "zcat $core"."_R2_$index.fastq.gz |" );
-	open( INDEX2, "zcat $core"."_R3_$index.fastq.gz |" );
+	open( READ2,  "zcat $core"."_R2_$index.fastq.gz |" );
 	my @read1  = ();
 	my @read2  = ();
-	my @index1 = ();
-	my @index2 = ();
 	## read the reads and indices from the input files.
 	while (1) {
 		for ( my $i = 0; $i < 4; $i++ ) {
 			if ($reverse) {
 				$read1[$i]  = <READ2>;
 				$read2[$i]  = <READ1>;
-				$index1[$i] = <INDEX2>;
-				$index2[$i] = <INDEX1>;
 			} else {
 				$read1[$i]  = <READ1>;
 				$read2[$i]  = <READ2>;
-				$index1[$i] = <INDEX1>;
-				$index2[$i] = <INDEX2>;
 			}
 		}
 		## stop reading if we reached the end of the files
 		last if !defined( $read1[0] );
 		## figure out what barcodes we are dealing with
-		my $i1 = $index1[1];
-		my $i2 = $index2[1];
+		my $i1 = substr($read1[1],8,8);
+		my $i2 = substr($read2[1],8,8);
+
+
+
+
 		chomp($i1);
 		chomp($i2);
 		$total_codes{$i1}{$i2} = 0 unless exists $total_codes{$i1}{$i2};
 		$total_codes{$i1}{$i2}++;
 		my $long_code = $i1.$i2;
-
+		
 		if ( exists $barcode{$long_code} ) {
 
 			#print "FOUND CODE\n";
@@ -243,9 +294,7 @@ foreach my $file (@files) {
 			my $READ_HANDLE_1    = $output_filehandles_1{ $barcode{$long_code} };
 			my $READ_HANDLE_2    = $output_filehandles_2{ $barcode{$long_code} };
 			my $READ_HANDLE_FULL = $output_filehandles_full{ $barcode{$long_code} } unless $skip_interleaved;
-			## quality trim the reads
-			qtrim_read( read => \@read1, quality => $quality_threshold, readtype => $type );
-			qtrim_read( read => \@read2, quality => $quality_threshold, readtype => $type );
+
 			## print the trimmed reads to an intermediate file if specified in $full_print
 
 			## merge the reads if possible
@@ -255,19 +304,36 @@ foreach my $file (@files) {
 			## discard the reads if it wasn't possible to merge
 			$read1[0] = clean_line( line => $read1[0], num => 1 );
 			$read2[0] = clean_line( line => $read2[0], num => 2 );
-
+			$read1[1] = prep_line(line => $read1[1], pad => ${$long_phase{$long_code}}[0]);
+			$read2[1] = prep_line(line => $read2[1], pad => ${$long_phase{$long_code}}[1]);
+			$read1[3] = prep_line(line => $read1[3], pad => ${$long_phase{$long_code}}[0]);
+			$read2[3] = prep_line(line => $read2[3], pad => ${$long_phase{$long_code}}[1]);
 			## Change the read header to accomodate for barcoding.
 			## print the reads to their respective files
+			## quality trim the reads
+			qtrim_read( read => \@read1, quality => $quality_threshold, readtype => $type );
+                        qtrim_read( read => \@read2, quality => $quality_threshold, readtype => $type );
+
 			print $READ_HANDLE_FULL @read1 if exists $output_filehandles_full{ $barcode{$long_code} } && !$skip_interleaved;
 			print $READ_HANDLE_FULL @read2 if exists $output_filehandles_full{ $barcode{$long_code} } && !$skip_interleaved;
 			print $READ_HANDLE_1 @read1    if exists $output_filehandles_1{ $barcode{$long_code} };
 			print $READ_HANDLE_2 @read2    if exists $output_filehandles_2{ $barcode{$long_code} };
 		} else {
+		    print OUTMISMATCH @read1;
+		    print OUTMISMATCH @read2;
 			$bc_count{mismatch} = 0 unless exists $bc_count{mismatch};
 			$bc_count{mismatch}++;
 		}
+		#exit;
 	}
 }
+foreach my $code1 (keys %total_codes){
+    foreach my $code2 (keys %{$total_codes{$code1}}){
+#	print STDERR "$code1\t$code2\t$total_codes{$code1}{$code2}\n";
+    }
+}
+
+
 ##close files and flush IO buffers
 foreach my $handle ( keys(%output_filehandles_1) ) {
 	$output_filehandles_1{$handle}->close();
@@ -282,10 +348,10 @@ foreach my $handle ( keys(%output_filehandles_1) ) {
 	}
 
 	my $source_dir= "raw_fastq";
-	if($trim_path && $adaptor_file){
-	    # Need to trim out adaptors in case we read through the other end of the read.
-	    # Trimming the content of $adaptor_file
-	    my $trim_cmd = "java -jar $trim_path/trimmomatic.jar PE -phred33 -baseout \"$output_dir/trimmed_fastq/$out_file_core"."_$handle\" \"$output_dir/raw_fastq/$out_file_core"."_$handle"."_1.fastq\" \"$output_dir/raw_fastq/$out_file_core"."_$handle"."_2.fastq\" ILLUMINACLIP:$adaptor_file:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:50 >/dev/null 2>/dev/null";
+	if($trim_path ){
+	        # Need to trim out adaptors in case we read through the other end of the read.
+	        # Trimming the content of $adaptor_file
+	    my $trim_cmd = "java -jar $trim_path/trimmomatic.jar PE -phred33 -baseout \"$output_dir/trimmed_fastq/$out_file_core"."_$handle\" \"$output_dir/raw_fastq/$out_file_core"."_$handle"."_1.fastq\" \"$output_dir/raw_fastq/$out_file_core"."_$handle"."_2.fastq\" ILLUMINACLIP:primers.fasta:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:50 > /dev/null 2>/dev/null";
 	    `$trim_cmd`;
 	    $source_dir = "trimmed_fastq";
 	}
@@ -297,14 +363,15 @@ foreach my $handle ( keys(%output_filehandles_1) ) {
 	my $options   = "-m $min_overlap -M $max_overlap -p $phred_value -s $fragment_std -r $read_length -x $mismatch_ratio";
 	my $flash_cmd ="flash \"$output_dir/$source_dir/$out_file_core"."_$handle";
 	$flash_cmd .= $source_dir eq "trimmed_fastq" ? "_1P\" ":"_1.fastq\" ";
-#	  ."_1P" if ($source_dir eq "trimmed_fastq");
-#	  ."_1.fastq\"";
+#  ."_1P" if ($source_dir eq "trimmed_fastq");
+#  ."_1.fastq\"";
 	$flash_cmd .= "\"$output_dir/$source_dir/$out_file_core"."_$handle";
 	$flash_cmd .= $source_dir eq "trimmed_fastq" ? "_2P\" ":"_2.fastq\" ";
-#	  ."_2P" if ($source_dir eq "trimmed_fastq");
-#	  ."_2.fastq\""; 
+#  ."_2P" if ($source_dir eq "trimmed_fastq");
+#  ."_2.fastq\""; 
 	$flash_cmd .="$options -d \"$output_dir/qiime_ready\" -o \"$out_file_core"
-	  .".$handle\" > /dev/null 2> /dev/null";
+	    .".$handle\" > /dev/null 2> /dev/null";
+
 
 	print STDERR "RUNNING : $flash_cmd\n";
 	system($flash_cmd)
@@ -442,6 +509,21 @@ sub convert_to_qiime_read {
 
 	return @return_array;
 }
+
+sub prep_line{
+    my %args = @_;
+#    print $args{line};
+    my $index= 16;
+    my $pad = length($args{pad}) if defined($args{pad});
+    #print STDERR "PAD : $pad\t$args{pad}\n";
+    $index += $pad if defined($args{pad});
+    #print STDERR "Cleaning $args{line}\t$index\n";
+    my $return_line = substr ($args{line},$index);
+    #print STDERR "$return_line\n";
+#    print $return_line;
+    return $return_line;
+}
+
 
 sub clean_line {
 	my %args = @_;
